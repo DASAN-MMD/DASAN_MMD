@@ -67,7 +67,7 @@ class MKMMDLoss(torch.nn.Module):
         else:
             self.kernels = kernels
 
-    def gaussian_kernel(sigma_list=[1, 5, 10]):
+    def gaussian_kernel(self, sigma_list=[1, 5, 10]):
 
         def _gaussian_kernel(x, y):
             K = torch.zeros(x.size(0), y.size(0)).to(x.device)
