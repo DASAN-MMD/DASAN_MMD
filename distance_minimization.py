@@ -67,14 +67,7 @@ class MKMMDLoss(torch.nn.Module):
         else:
             self.kernels = kernels
 
-    @staticmethod
     def gaussian_kernel(sigma_list=[1, 5, 10]):
-        """
-        Create a Gaussian kernel function.
-
-        Args:
-            sigma_list (list of floats): List of bandwidths for Gaussian kernel.
-        """
 
         def _gaussian_kernel(x, y):
             K = torch.zeros(x.size(0), y.size(0)).to(x.device)
@@ -86,16 +79,7 @@ class MKMMDLoss(torch.nn.Module):
         return _gaussian_kernel
 
     def forward(self, features_s, features_t):
-        """
-        Compute MK-MMD Loss.
-
-        Args:
-            features_s (torch.Tensor): Features from the source domain. Shape (N_s, D).
-            features_t (torch.Tensor): Features from the target domain. Shape (N_t, D).
-
-        Returns:
-            loss (torch.Tensor): Computed MK-MMD loss.
-        """
+       
         mmd_loss = 0
         for kernel in self.kernels:
             # Compute kernel matrices
@@ -110,31 +94,43 @@ class MKMMDLoss(torch.nn.Module):
         return mmd_loss
 
 
-class JMMDLoss(torch.nn.Module):
-    def __init__(self, kernel_mul=2.0, kernel_num=5, fix_parameters=True):
+class JMMDLoss(nn.Module):
+    def __init__(self, kernel_mul=2.0, kernel_num=5):
+        
         super(JMMDLoss, self).__init__()
         self.kernel_mul = kernel_mul
         self.kernel_num = kernel_num
-        self.fix_parameters = fix_parameters
 
-    def gaussian_kernel(self, x, y, bandwidth):
-        pairwise_dist = torch.sum((x - y) ** 2, dim=1)
-        kernel = torch.exp(-pairwise_dist / (2 * bandwidth ** 2))
-        return kernel
+    def gaussian_kernel(self, x, y):
+
+        n, d = x.shape
+        m, _ = y.shape
+
+        # Compute pairwise squared distances
+        xx = torch.sum(x ** 2, dim=1, keepdim=True)  # (N, 1)
+        yy = torch.sum(y ** 2, dim=1, keepdim=True)  # (M, 1)
+        xy = torch.matmul(x, y.T)                    # (N, M)
+
+        pairwise_dist = xx + yy.T - 2 * xy  # (N, M), squared Euclidean distance
+
+        # Compute bandwidth using median heuristic
+        bandwidth = torch.median(pairwise_dist[pairwise_dist > 0])
+        bandwidth_list = [bandwidth * (self.kernel_mul ** i) for i in range(self.kernel_num)]
+        
+        # Compute kernel matrices with different bandwidths and sum them
+        kernels = [torch.exp(-pairwise_dist / (2 * bw)) for bw in bandwidth_list]
+        return sum(kernels)  # Return multi-scale kernel matrix
 
     def forward(self, source_features, target_features):
-        n = source_features.size(0)
-        m = target_features.size(0)
+        
+        if len(source_features) != len(target_features):
+            raise ValueError("Source and Target feature lists must have the same length.")
 
-        # Compute Gaussian kernel bandwidth
-        bandwidth = ((torch.sum(source_features ** 2) + torch.sum(target_features ** 2)) / (n + m)).sqrt()
-
-        # Compute the kernel matrices
-        K_ss = self.gaussian_kernel(source_features, source_features, bandwidth)
-        K_tt = self.gaussian_kernel(target_features, target_features, bandwidth)
-        K_st = self.gaussian_kernel(source_features, target_features, bandwidth)
-
-        # Mean of the MMD terms
-        loss = K_ss.mean() + K_tt.mean() - 2 * K_st.mean()
+        loss = 0
+        for src, tgt in zip(source_features, target_features):
+            K_ss = self.gaussian_kernel(src, src).mean()
+            K_tt = self.gaussian_kernel(tgt, tgt).mean()
+            K_st = self.gaussian_kernel(src, tgt).mean()
+            loss += K_ss + K_tt - 2 * K_st  # MMD computation
 
         return loss
